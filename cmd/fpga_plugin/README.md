@@ -152,9 +152,6 @@ which is present and thus to use:
 - The Linux Kernel in-tree [DFL](https://www.kernel.org/doc/html/latest/fpga/dfl.html) driver
 - The out of tree [OPAE](https://opae.github.io/latest/docs/drv_arch/drv_arch.html) driver
 
-Install this component (FPGA device plugin) first, and then follow the links
-and instructions to install the other components.
-
 ## Getting the source code
 
 To obtain the YAML files used for deployment, or to obtain the source tree if you intend to
@@ -178,28 +175,15 @@ $ ls /var/lib/kubelet/device-plugins/kubelet.sock
 
 ## Deploying as a DaemonSet
 
-You can deploy the plugin in either of the modes, using the
-[DaemonSet YAML](../../deployments/fpga_plugin/fpga_plugin.yaml)
-supplied. Details are in the following sections. Actions common to both deployment modes are detailed
-first. Mode specific actions are then detailed.
-
-If you intend to deploy your own image, you will need to reference the
-[image build section](#build-the-plugin-image) first.
-
-If you do not want to deploy the `devel` tagged image, you will need to edit the
-YAML deployment files to reference your required image.
-
-### For beta testing: new deployment model
-
-The FPGA plugin deployment is currently being rewritten to enable
-straight-forward deployment of both `af/preprogrammed` and
-`region/orchestrated` modes. The deployment has two steps:
+You can deploy both the FPGA plugin and the needed FPGA admission
+controller components with two steps:
 
 1. Run `scripts/fpga-plugin-prepare-for-kustomization.sh`. This will
    create the necessary secrets: a key and a signed certificate for
    the FPGA admission controller.
 
-2. Depending on the FPGA mode, run either
+2. Depending on the FPGA mode (either `af`/`preprogrammed` or
+   `region`/`orchestrated`), run either
    ```bash
    $ kubectl create -k deployments/fpga_plugin/overlays/af
    ```
@@ -207,55 +191,14 @@ straight-forward deployment of both `af/preprogrammed` and
    ```bash
    $ kubectl create -k deployments/fpga_plugin/overlays/region
    ```
-   This will create the service account and deploy
-   both the FPGA plugin and the admission controller in the chosen mode.
 
-This deployment model is under development. The remaining part of this
-document goes through the current deployment model: here for the
-FPGA plugin and in the next document for the FPGA admission controller.
-
-### Create a service account
-
-To deploy the plugin in a production cluster, create a service account
-for the plugin:
-
-```bash
-$ kubectl create -f deployments/fpga_plugin/fpga_plugin_service_account.yaml
-serviceaccount/intel-fpga-plugin-controller created
-clusterrole.rbac.authorization.k8s.io/node-getter created
-clusterrolebinding.rbac.authorization.k8s.io/get-nodes created
-```
-
-### Deploying `orchestrated` mode
-
-To deploy the FPGA plugin DaemonSet in `orchestrated` (`region`) mode, you need to set the plugin
-mode annotation on all of your nodes, otherwise the FPGA plugin will run in its default
-`af` (`preprogrammed`) mode.
-
-```bash
-$ kubectl annotate node --all 'fpga.intel.com/device-plugin-mode=region'
-```
-
-Mixing of the two modes (`orchestrated` and `af`) across nodes in the same cluster is
-*not currently supported*.
-
-### Deploying `af` mode
-
-To deploy the FPGA plugin DaemonSet in `af` mode, you do not need to set the mode annotation on
-your nodes, as the FPGA plugin runs in `af` mode by default.
-
-> **Note:** The FPGA plugin [DaemonSet YAML](../../deployments/fpga_plugin/fpga_plugin.yaml)
-> also deploys the [FPGA CRI-O hook](../fpga_criohook) `initcontainer` image, but it will be
-> benign (un-used) when running the FPGA plugin in `af` mode.
-
-### Deploy the DaemonSet
-
-You can then use the example DaemonSet YAML file provided to deploy the plugin.
-
-```bash
-$ kubectl create -f deployments/fpga_plugin/fpga_plugin.yaml
-daemonset.apps/intel-fpga-plugin created
-```
+If you intend to deploy your own image, you will need to reference the
+[image build section](#build-the-plugin-image) first.
+You can change container images in the
+[FPGA plugin DaemonSet](../../deployments/fpga_plugin/base/intel-fpga-plugin-daemonset.yaml)
+and
+the [FPGA admission controller Deployment](../../deployments/fpga_admissionwebhook/base/intel-fpga-webhook-deployment.yaml)
+YAMLs. Configurations use `devel` tagged images by default.
 
 ### Verify plugin registration
 
@@ -267,6 +210,38 @@ mode:
 $ kubectl describe nodes | grep fpga.intel.com
 fpga.intel.com/region-ce48969398f05f33946d560708be108a:  1
 fpga.intel.com/region-ce48969398f05f33946d560708be108a:  1
+```
+
+### Uninstalling
+
+Depending on the FPGA mode deployed in the cluster, delete all FPGA
+plugin and admission controller components by running either
+```bash
+$ kubectl delete -k deployments/fpga_plugin/overlays/af
+```
+or
+```bash
+$ kubectl delete -k deployments/fpga_plugin/overlays/region
+```
+
+Deleting can print errors on not finding `acceleratorfunction` or
+`region` resources to delete. This happens when the whole custom
+resource type has been deleted before actual resources of that
+type. These error messages can be ignored.
+
+Extended resources `fpga.intel.com/*` will not be allocatable anymore
+after deleting the components. You can completely remove these
+resources by patching node statuses.
+
+```bash
+$ kubectl proxy &
+$ kubectl get nodes -o json | jq -r '.items[]| "\(.metadata.name) \(.status.capacity | keys[] | select(startswith("fpga.intel.com/")))"' | \
+while read node fpga_resource; do
+    curl --header "Content-Type: application/json-patch+json" \
+         --request PATCH \
+         --data "[{\"op\": \"remove\", \"path\": \"/status/capacity/${fpga_resource/\//~1}\"}, {\"op\": \"remove\", \"path\": \"/status/allocatable/${fpga_resource/\//~1}\"}]" \
+         http://localhost:8001/api/v1/nodes/${node}/status
+done
 ```
 
 ### Building the plugin image
