@@ -4,9 +4,8 @@ resources:
   - intel-fpga-webhook-svc.yaml
   - fpga-mutator-webhook-cfg.yaml
   - region-crd.yaml
-  - regions.yaml
   - acceleratorfunction-crd.yaml
-  - acceleratorfunctions.yaml
+  - mappings-collection.yaml
 
 configurations:
   - kustomize-varreference.yaml

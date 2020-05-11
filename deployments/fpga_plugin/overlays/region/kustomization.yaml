@@ -1,6 +1,6 @@
 bases:
   - ../../base
-  - ../../../fpga_admissionwebhook/overlays/orchestrated
+  - ../../../fpga_admissionwebhook/base
 
 patchesJson6902:
   - target:
